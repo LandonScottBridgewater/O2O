@@ -7,7 +7,7 @@ import isodate
 from unidecode import unidecode
 import os
 
-data_folder = "/home/pi/Documents/Projects/Artist_DL/data"
+data_folder = "" # Enter the path to download
 st_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 def query_filter(query, title, channel, duration_seconds, minimum_duration_seconds, maximum_duration_seconds,filtered_substrings):
