@@ -1,0 +1,278 @@
+import requests
+from sentence_transformers import SentenceTransformer, util
+import re
+import torch
+from sklearn.cluster import AgglomerativeClustering
+from pytube import YouTube
+from googleapiclient.discovery import build
+import isodate
+from unidecode import unidecode
+import subprocess
+
+data_folder = "/home/pi/Documents/Projects/Artist_DL/data"
+st_model = SentenceTransformer('all-MiniLM-L6-v2')
+
+def group_tracks(track_data, artist, similarity_threshold=0.75):
+    """
+    Groups similar tracks based on semantic similarity.
+    Args:
+        track_data: list of dicts with 'title' and 'link' keys
+        artist: artist name (for cleaning)
+        similarity_threshold: threshold for clustering
+    Returns: dict[label -> list of {title, link} dicts]
+    """
+    # Extract titles and normalize
+    titles = [t['title'].lower() for t in track_data]
+    titles = [re.sub(artist, "", t) for t in titles]
+
+    # Encode to embeddings
+    embeddings = st_model.encode(titles, convert_to_tensor=True, batch_size=64)
+
+    # Compute cosine similarity
+    cosine_scores = util.cos_sim(embeddings, embeddings).cpu()
+
+    # Convert similarity to distance (1 - similarity)
+    distances = 1 - cosine_scores.numpy()
+
+    # Cluster titles
+    clustering = AgglomerativeClustering(
+        metric="precomputed", linkage="average",
+        distance_threshold=1 - similarity_threshold, n_clusters=None
+    ).fit(distances)
+
+    # Group by cluster label, keeping original track data
+    groups = {}
+    for label, track in zip(clustering.labels_, track_data):
+        groups.setdefault(label, []).append(track)
+
+    return groups
+
+def find_canonical(track_group):
+    """
+    Finds the canonical (most representative) track from a group.
+    Args:
+        track_group: list of dicts with 'title' and 'link' keys
+    Returns: dict with the canonical track's title and link
+    """
+    titles = [t['title'] for t in track_group]
+    
+    # Get embeddings & cosine similarity matrix
+    embeddings = st_model.encode(titles, convert_to_tensor=True)
+    cosine_scores = util.cos_sim(embeddings, embeddings)
+
+    # Compute "centrality" (similarity to all others)
+    centrality = torch.sum(cosine_scores, dim=1) - 1  # subtract self-similarity
+
+    # Compute "simplicity" (shorter title = cleaner)
+    lengths = torch.tensor([len(t) for t in titles], dtype=torch.float32)
+    norm_lengths = lengths / lengths.max()
+
+    # Combine both: maximize similarity, minimize extra words
+    score = centrality - 0.3 * norm_lengths  # tune 0.3 to adjust simplicity weight
+
+    # Return best-scoring (canonical) track
+    best_idx = torch.argmax(score).item()
+    return track_group[best_idx]
+
+def download_youtube_video(video_link, output_path="."):
+    """Downloads a YouTube video using pytube."""
+    try:
+        yt = YouTube(video_link)
+        stream = yt.streams.get_highest_resolution()
+        file_path = stream.download(output_path=output_path)
+        print(f"✅ Video downloaded: {file_path}")
+        return file_path
+    except Exception as e:
+        print(f"❌ Failed to download video: {e}")
+        return None
+
+def download_soundcloud_track(track_link, output_path="."):
+    """Downloads a SoundCloud track using scdl."""
+    try:
+        subprocess.run(["scdl", "-l", track_link, "-o", output_path, "--onlymp3"], check=True)
+        print("✅ SoundCloud track downloaded successfully.")
+        return output_path
+    except Exception as e:
+        print(f"❌ Failed to download SoundCloud track: {e}")
+        return None
+
+def query_filter(query, title, channel, duration_seconds, minimum_duration_seconds, maximum_duration_seconds,filtered_substrings):
+
+    filtered_substrings = [i.lower() for i in filtered_substrings]
+
+    if not minimum_duration_seconds < duration_seconds < maximum_duration_seconds or any(sub in unidecode(title).lower() for sub in filtered_substrings):
+        return False
+    
+    title_channel_string = f"{title} {channel}"
+
+    if query.lower() not in title_channel_string.lower():
+        emb_query = st_model.encode([query.lower()], convert_to_tensor=True)
+        emb_title = st_model.encode([unidecode(title_channel_string).lower()], convert_to_tensor=True)
+        sim_score = util.cos_sim(emb_query, emb_title).item()
+
+        if sim_score < .3:
+            return False
+        
+    return True
+
+def query_soundcloud(query, minimum_duration_seconds, maximum_duration_seconds, max_results=400):
+    """Search SoundCloud for tracks matching a query."""
+    def get_soundcloud_client_id():
+        """Automatically fetches a working SoundCloud client_id."""
+        headers = {"User-Agent": "Mozilla/5.0"}
+        home_url = "https://soundcloud.com"
+
+        try:
+            html = requests.get(home_url, headers=headers, timeout=10).text
+            js_urls = re.findall(r'src="(https://a-v2\.sndcdn\.com/assets/[^"]+\.js)"', html)
+            if not js_urls:
+                print("⚠️ Could not find JS URL with client_id")
+                return None
+
+            for js_url in js_urls:
+                js_code = requests.get(js_url, headers=headers, timeout=10).text
+                match = re.search(r'client_id\s*:\s*"([a-zA-Z0-9]{32})"', js_code)
+                if match:
+                    return match.group(1)
+
+            print("⚠️ client_id not found in JS files")
+            return None
+        except Exception as e:
+            print(f"⚠️ Error fetching client_id: {e}")
+            return None
+    client_id = get_soundcloud_client_id()
+    if not client_id:
+        print("❌ No client_id found — cannot query SoundCloud.")
+        return []
+
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    all_tracks = []
+    limit = 50
+    offset = 0
+
+    while len(all_tracks) < max_results:
+        search_url = (
+            f"https://api-v2.soundcloud.com/search/tracks"
+            f"?q={requests.utils.quote(query)}"
+            f"&client_id={client_id}&limit={limit}&offset={offset}"
+        )
+
+        response = requests.get(search_url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            print(f"⚠️ SoundCloud returned {response.status_code}")
+            break
+
+        data = response.json()
+        collection = data.get("collection", [])
+        if not collection:
+            break
+
+        for item in collection:
+            title = item.get("title")
+            duration_miliseconds = item.get("duration")
+            duration_seconds = duration_miliseconds / 1000 if duration_miliseconds else None
+            publisher_metadata = item.get("publisher_metadata", {})
+            artist = publisher_metadata.get("artist") or item.get("user", {}).get("username")
+            permalink_url = item.get("permalink_url")
+            if title and permalink_url:
+                if query_filter(query=query,
+                                title=title,
+                                channel=artist,
+                                duration_seconds=duration_seconds,
+                                minimum_duration_seconds=minimum_duration_seconds,
+                                maximum_duration_seconds=maximum_duration_seconds,
+                                filtered_substrings=["beat", "slowed", "reverb", "free"]):
+                    all_tracks.append({"title": title, "link": permalink_url})
+
+        print(f"Fetched {len(all_tracks)} tracks so far...")
+        offset += limit
+
+    return all_tracks[:max_results]
+
+def query_youtube(query, minimum_duration_seconds, maximum_duration_seconds, filtered_substrings, max_results=400, api_key="AIzaSyDU2MKsdORls4W4zQx4FzAMtfUIH3-tmtc"):
+    youtube = build("youtube", "v3", developerKey=api_key)
+
+    results = []
+    request = youtube.search().list(
+        q=query,
+        part="snippet",
+        maxResults=min(max_results, 50),
+        type="video"
+    )
+    response = request.execute()
+
+    while response:
+        video_ids = [item['id']['videoId'] for item in response['items']]
+
+        # Now query the videos endpoint to get durations
+        video_request = youtube.videos().list(
+            part="contentDetails,snippet",
+            id=",".join(video_ids)
+        )
+        video_response = video_request.execute()
+
+        for item in video_response["items"]:
+            title = item["snippet"]["title"]
+            video_id = item["id"]
+            link = f"https://www.youtube.com/watch?v={video_id}"
+            channel = item["snippet"]["channelTitle"]
+            # Duration is in ISO 8601 format like 'PT4M13S'
+            iso_duration = item["contentDetails"]["duration"]
+            duration_seconds = isodate.parse_duration(iso_duration).total_seconds()
+            if query_filter(query=query,
+                            title=title, 
+                            channel=channel, 
+                            duration_seconds=duration_seconds, 
+                            minimum_duration_seconds=minimum_duration_seconds, 
+                            maximum_duration_seconds=maximum_duration_seconds,
+                            filtered_substrings=filtered_substrings):
+                results.append({
+                    "title": title,
+                    "link": link
+                })
+
+            if len(results) >= max_results:
+                return results[:max_results]
+
+        if "nextPageToken" in response and len(results) < max_results:
+            request = youtube.search().list(
+                q=query,
+                part="snippet",
+                maxResults=min(max_results - len(results), 50),
+                type="video",
+                pageToken=response["nextPageToken"]
+            )
+            response = request.execute()
+        else:
+            break
+
+    return results
+
+def query_media(platforms, query, max_results, minimum_duration_seconds, maximum_duration_seconds,filtered_substrings=[]):
+    """Query both SoundCloud and YouTube for tracks."""
+    tracks = []
+    if "soundcloud" in platforms:
+        tracks.extend(query_soundcloud(query=query, 
+                                    max_results=max_results,
+                                    filtered_substrings=filtered_substrings,
+                                    minimum_duration_seconds=minimum_duration_seconds, 
+                                    maximum_duration_seconds=maximum_duration_seconds))
+    if "youtube" in platforms:
+        tracks.extend(query_youtube(query=query, 
+                                    max_results=max_results, 
+                                    filtered_substrings=filtered_substrings,
+                                    minimum_duration_seconds=minimum_duration_seconds, 
+                                    maximum_duration_seconds=maximum_duration_seconds))
+    return tracks
+
+def query_artist(artist):
+    tracks = query_media(platforms=["youtube","soundcloud"],
+                         max_results=400,
+                         minimum_duration_seconds=60,
+                         maximum_duration_seconds=390,
+                         filtered_substrings=["beat", "slowed", "reverb", "free"])
+    
+    for track in tracks:
+        track["artist"] = artist
+
+    return tracks
