@@ -1,0 +1,5 @@
+requests
+sentence-transformers
+google-api-python-client
+isodate
+unidecode
