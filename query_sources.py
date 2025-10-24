@@ -6,7 +6,7 @@ import isodate
 from unidecode import unidecode
 import os
 
-data_folder = "" # enter path
+data_folder = f"{os.path.expanduser('~')}/O2O"
 st_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 def query_filter(query, title, channel, duration_seconds, minimum_duration_seconds, maximum_duration_seconds,filtered_substrings):
@@ -195,6 +195,18 @@ def query_artist(artist):
     return tracks
 
 if __name__ == '__main__':
+
+    def data_folder_selection():
+        print("Enter a filepath for O2O. Leave blank for default.")
+        data_folder_1 = input("").strip()
+
+        if not os.path.exists(data_folder_1) and not data_folder_1 == "":
+            data_folder_selection()
+
+        return data_folder_1
+
+    data_folder = data_folder_selection()
+
     print("Type '1' to query an artist")
     print("Type '2' to query media")
     choice = input("").strip()
