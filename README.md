@@ -27,13 +27,17 @@ Add the environment variable 'YOUTUBE_API_KEY' from Google's YouTube Data v3 API
 
 Linux/macOS:
 
+```bash
 export YOUTUBE_API_KEY="" # enter api key
 python3 ./app.py
+```
 
 Windows:
 
+```bash
 set YOUTUBE_API_KEY= # enter api key
 python app.py
+```
 
 ---
 
