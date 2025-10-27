@@ -217,7 +217,8 @@ class MediaDownloader:
 if __name__ == '__main__':
 
     project = input("type path:")
-
+    artist = input("type artist:")
+    
     data_handler = DataHandler(project)
 
     print(data_handler.list_all_files())
@@ -226,4 +227,4 @@ if __name__ == '__main__':
 
     st_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-    media_dl.download_artist("ratrace90210", st_model, manual_review=False)
+    media_dl.download_artist(artist, st_model, manual_review=False)
