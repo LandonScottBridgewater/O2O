@@ -51,8 +51,6 @@ For instance, if it is given a song and a slowed and reverb version of the song,
 
 --- 
 
-- Note: query_sources is built to be built into other applications, but it may work by itself.
-
 ### query_sources.py
 
 This script scrapes online data raw for processing.
