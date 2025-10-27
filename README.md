@@ -21,9 +21,19 @@ pip install -r requirements.txt
 
 ### Main Usage
 
-python3 ./query_sources.py
+Add a 'cookies.txt' file of YouTube in the project to download from YouTube without errors. I personally used https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc, but you may use any tool to get a Netscape HTTP Cookie File for YouTube.
 
-- Note: query_sources is built to be built into other applications, but it may work by itself.
+Add the environment variable 'YOUTUBE_API_KEY' from Google's YouTube Data v3 API.
+
+Linux/macOS:
+
+export YOUTUBE_API_KEY="" # enter api key
+python3 ./app.py
+
+Windows:
+
+set YOUTUBE_API_KEY= # enter api key
+python app.py
 
 ---
 
@@ -36,6 +46,8 @@ It uses semantic similarity clustering via Sentence Transformers to group simila
 For instance, if it is given a song and a slowed and reverb version of the song, it will pick the original on its own.
 
 --- 
+
+- Note: query_sources is built to be built into other applications, but it may work by itself.
 
 ### Functions
 
