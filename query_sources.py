@@ -7,9 +7,8 @@ from unidecode import unidecode
 import os
 
 data_folder = f"{os.path.expanduser('~')}/O2O"
-st_model = SentenceTransformer('all-MiniLM-L6-v2')
 
-def query_filter(query, title, channel, duration_seconds, minimum_duration_seconds, maximum_duration_seconds,filtered_substrings):
+def query_filter(st_model, query, title, channel, duration_seconds, minimum_duration_seconds, maximum_duration_seconds,filtered_substrings):
 
     filtered_substrings = [i.lower() for i in filtered_substrings]
 
@@ -28,7 +27,7 @@ def query_filter(query, title, channel, duration_seconds, minimum_duration_secon
         
     return True
 
-def query_soundcloud(query, minimum_duration_seconds, maximum_duration_seconds, filtered_substrings, max_results=400):
+def query_soundcloud(st_model, query, minimum_duration_seconds, maximum_duration_seconds, filtered_substrings, max_results=400):
     """Search SoundCloud for tracks matching a query."""
     def get_soundcloud_client_id():
         """Automatically fetches a working SoundCloud client_id."""
@@ -84,25 +83,28 @@ def query_soundcloud(query, minimum_duration_seconds, maximum_duration_seconds, 
             title = item.get("title")
             duration_miliseconds = item.get("duration")
             duration_seconds = duration_miliseconds / 1000 if duration_miliseconds else None
-            publisher_metadata = item.get("publisher_metadata", {})
+            publisher_metadata = item.get("publisher_metadata", {}) or {}
             artist = publisher_metadata.get("artist") or item.get("user", {}).get("username")
             permalink_url = item.get("permalink_url")
             if title and permalink_url:
-                if query_filter(query=query,
+                if query_filter(st_model=st_model,
+                                query=query,
                                 title=title,
                                 channel=artist,
                                 duration_seconds=duration_seconds,
                                 minimum_duration_seconds=minimum_duration_seconds,
                                 maximum_duration_seconds=maximum_duration_seconds,
                                 filtered_substrings=filtered_substrings):
-                    all_tracks.append({"title": title, "link": permalink_url})
+                    all_tracks.append({"title": title, 
+                                       "link": permalink_url,
+                                       "platform": "soundcloud"})
 
         print(f"Fetched {len(all_tracks)} tracks so far...")
         offset += limit
 
     return all_tracks[:max_results]
 
-def query_youtube(query, minimum_duration_seconds, maximum_duration_seconds, filtered_substrings, max_results=400,api_key=os.getenv("YOUTUBE_API_KEY")):
+def query_youtube(st_model, query, minimum_duration_seconds, maximum_duration_seconds, filtered_substrings, max_results=400,api_key=os.getenv("YOUTUBE_API_KEY")):
     if not api_key:
         raise ValueError("Missing YouTube API key. Please set YOUTUBE_API_KEY as an environment variable.")
 
@@ -135,7 +137,8 @@ def query_youtube(query, minimum_duration_seconds, maximum_duration_seconds, fil
             # Duration is in ISO 8601 format like 'PT4M13S'
             iso_duration = item["contentDetails"]["duration"]
             duration_seconds = isodate.parse_duration(iso_duration).total_seconds()
-            if query_filter(query=query,
+            if query_filter(st_model=st_model,
+                            query=query,
                             title=title, 
                             channel=channel, 
                             duration_seconds=duration_seconds, 
@@ -144,7 +147,8 @@ def query_youtube(query, minimum_duration_seconds, maximum_duration_seconds, fil
                             filtered_substrings=filtered_substrings):
                 results.append({
                     "title": title,
-                    "link": link
+                    "link": link,
+                    "platform": "youtube"
                 })
 
             if len(results) >= max_results:
@@ -164,25 +168,28 @@ def query_youtube(query, minimum_duration_seconds, maximum_duration_seconds, fil
 
     return results
 
-def query_media(platforms, query, max_results, minimum_duration_seconds, maximum_duration_seconds,filtered_substrings=[]):
+def query_media(st_model, platforms, query, max_results, minimum_duration_seconds, maximum_duration_seconds,filtered_substrings=[]):
     """Query both SoundCloud and YouTube for tracks."""
     tracks = []
     if "soundcloud" in platforms:
-        tracks.extend(query_soundcloud(query=query, 
+        tracks.extend(query_soundcloud(st_model=st_model,
+                                    query=query, 
                                     max_results=max_results,
                                     filtered_substrings=filtered_substrings,
                                     minimum_duration_seconds=minimum_duration_seconds, 
                                     maximum_duration_seconds=maximum_duration_seconds))
     if "youtube" in platforms:
-        tracks.extend(query_youtube(query=query, 
+        tracks.extend(query_youtube(st_model=st_model,
+                                    query=query, 
                                     max_results=max_results, 
                                     filtered_substrings=filtered_substrings,
                                     minimum_duration_seconds=minimum_duration_seconds, 
                                     maximum_duration_seconds=maximum_duration_seconds))
     return tracks
 
-def query_artist(artist):
-    tracks = query_media(platforms=["youtube","soundcloud"],
+def query_artist(artist, st_model):
+    tracks = query_media(st_model=st_model,
+                         platforms=["youtube","soundcloud"],
                          query=artist,
                          max_results=400,
                          minimum_duration_seconds=60,
@@ -195,6 +202,8 @@ def query_artist(artist):
     return tracks
 
 if __name__ == '__main__':
+
+    st_model = SentenceTransformer('all-MiniLM-L6-v2')
 
     def data_folder_selection():
         print("Enter a filepath for O2O. Leave blank for default.")
@@ -213,7 +222,7 @@ if __name__ == '__main__':
 
     if choice == '1':
         artist_name = input("Type in an artist: ").strip()
-        print(query_artist(artist_name))
+        print(query_artist(artist_name, st_model))
     else:
         query = input("What is your query? ").strip()
 
@@ -253,4 +262,3 @@ if __name__ == '__main__':
 
         for r in results:
             print(f"{r['title']} — {r['link']}")
-
