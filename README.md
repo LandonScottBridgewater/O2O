@@ -53,7 +53,9 @@ For instance, if it is given a song and a slowed and reverb version of the song,
 
 - Note: query_sources is built to be built into other applications, but it may work by itself.
 
-### Functions
+### query_sources.py
+
+This script scrapes online data raw for processing.
 
 ### `query_artist(artist)` 
 
@@ -75,3 +77,20 @@ Results from `query_soundcloud` & `query_youtube` send their results to `query_f
 
 For music, this will output the canonical/official version of a song based on the title and channel without verification. 
 Most heuristics rely on official sources, but this approach works for even niche media.
+
+### app.py
+
+This script manages the high-level user and the database system. The files are named by their ID + file extension for easy look up. The reason I created this structure is because I have noticed each time I make a small change to the data structure, it becomes very tedious to manager filepaths. Instead, I used IDs which have metadata and the unique file name linked to the ID. 
+
+### `class DataHandler`
+
+This manages the sqlite database of IDs & json.
+
+### `class MediaDownloader`
+
+This class retrieves the files using query_sources.py and moves the files into DataHandler's data structure.
+
+---
+
+**Author:** Landon Scott Bridgewater  
+**License:** MIT
