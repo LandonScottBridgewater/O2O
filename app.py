@@ -7,6 +7,7 @@ from download_sources import download_youtube, download_soundcloud
 from query_sources import query_artist
 import shutil
 from sentence_transformers import SentenceTransformer
+import platform
 
 class DataHandler:
     def __init__(self, project_path):
@@ -150,9 +151,18 @@ class DataHandler:
 
 
 class MediaDownloader:
-    def __init__(self, data_handler):
+    def __init__(self, data_handler, temp_dir=None):
         self.data_handler = data_handler
-        self.media_folder = Path(f"dev/shm/{uuid4()}")
+        os_name = platform.system()
+
+        if os_name == "Linux":
+            self.media_folder = Path(f"/dev/shm/{uuid4()}")
+        else:
+            if temp_dir:
+                self.media_folder = Path(temp_dir) / str(uuid4())
+            else:
+                raise ValueError("Non-Linux OS detected. You must provide a temp_dir for media downloads.")
+
         self.media_folder.mkdir(parents=True, exist_ok=True)
 
     def review_queries(self, songs):
@@ -206,9 +216,8 @@ class MediaDownloader:
 
 if __name__ == '__main__':
 
-    project = input("type path:").strip()
-    artist = input("type artist:").strip()
-  
+    project = input("type path:")
+
     data_handler = DataHandler(project)
 
     print(data_handler.list_all_files())
@@ -217,4 +226,4 @@ if __name__ == '__main__':
 
     st_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-    media_dl.download_artist(artist, st_model, manual_review=False)
+    media_dl.download_artist("ratrace90210", st_model, manual_review=False)
