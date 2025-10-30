@@ -78,7 +78,7 @@ Most heuristics rely on official sources, but this approach works for even niche
 
 ### app.py
 
-This script manages the high-level user and the database system. The files are named by their ID + file extension for easy look up. The reason I created this structure is because I have noticed each time I make a small change to the data structure, it becomes very tedious to manager filepaths. Instead, I used IDs which have metadata and the unique file name linked to the ID. 
+This script manages the high-level user and the database system. The files are named by their ID + file extension for easy look up. The reason I created this structure is because I have noticed each time I make a small change to the data structure, it becomes very tedious to manage filepaths. Instead, I used IDs which have metadata and the unique file name linked to the ID. 
 
 ### `class DataHandler`
 
