@@ -6,7 +6,9 @@
 
 
 ## Requirements
-  
+
+- Python 3
+- Requirements.txt
 - YouTube API Key (for YouTube queries)  
 
 ---
