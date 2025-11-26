@@ -109,14 +109,14 @@ Passes a for loop over `download_result`.
 
 Enables manual review by the user for each result.
 
-#### query_artist(self, 
+#### `query_artist(self, 
                   artist_name, 
                   st_model, 
                   manual_review=True, 
                   max_results=400, 
                   minimum_duration_seconds=60,
                   maximum_duration_seconds=390,
-                  filtered_substrings=["beat", "slowed", "reverb", "free"]):
+                  filtered_substrings=["beat", "slowed", "reverb", "free"])`
                   
 Connects `app.py` to `query_sources.py`'s `query_artist`.
 
