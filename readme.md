@@ -40,9 +40,9 @@ For instance, if it is given a song and a slowed and reverb version of the song,
 
 --- 
 
-### Docs
+## Docs
 
-#### `query_sources.py`
+### `query_sources.py`
 
 ### `query_artist(artist)` 
 
@@ -65,7 +65,7 @@ Results from `query_soundcloud` & `query_youtube` send their results to `query_f
 For music, this will output the canonical/official version of a song based on the title and channel without verification. 
 Most heuristics rely on official sources, but this approach works for even niche media.
 
-#### `app.py`
+### `app.py`
 
 ### `class DataHandler`
 
