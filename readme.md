@@ -21,7 +21,9 @@ pip install -r requirements.txt
 
 ### Main Usage
 
+```bash
 python3 ./app.py
+```
 
 ---
 
