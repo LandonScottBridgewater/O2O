@@ -1,0 +1,6 @@
+config.yaml
+cookies.txt
+notes.md
+title.basics.tsv
+title.basics.tsv.gz
+imdb_data_to_sql.py
