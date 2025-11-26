@@ -21,9 +21,7 @@ pip install -r requirements.txt
 
 ### Main Usage
 
-python3 ./query_sources.py
-
-- Note: query_sources is built to be built into other applications, but it may work by itself.
+python3 ./app.py
 
 ---
 
