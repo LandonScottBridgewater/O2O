@@ -1,0 +1,5 @@
+youtube_data_api_v3:
+  api_key: "enter api_key here"
+  oauth:
+    id: "enter oauth id here"
+    secret: "enter oauth secret here"
