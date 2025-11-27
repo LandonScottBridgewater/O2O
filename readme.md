@@ -9,8 +9,8 @@
 
 - Python 3
 - Requirements.txt
-- YouTube API Key (for YouTube queries)
-- YouTube OAuth Token (until this project is out of beta & I release verify the google api service for OAuth)
+- YouTube API Key for YouTube Data v3 (for YouTube queries)
+- YouTube OAuth Token for YouTube Data v3 (until this project is out of beta & I release verify the google api service for OAuth)
 
 ---
 
