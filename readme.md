@@ -24,6 +24,8 @@ pip install -r requirements.txt
 
 ### Main Usage
 
+Fill in `config.yaml` with Googles YouTube Data v3 API credentials 
+
 ```bash
 python3 ./app.py
 ```
