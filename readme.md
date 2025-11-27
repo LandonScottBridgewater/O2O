@@ -26,7 +26,7 @@ pip install -r requirements.txt
 
 Fill in `config.yaml` with Googles YouTube Data v3 API credentials.
 
-Get a Netscape HTTP Cookie File. Specifically, you may use https://chromewebstore.google.com/detail/get-cookiestxt-locally on the YouTube homescreen.
+Get a Netscape HTTP Cookie File named `cookies.txt` in the O2O directory. Specifically, you may use https://chromewebstore.google.com/detail/get-cookiestxt-locally on the YouTube homescreen.
 
 ```bash
 python3 ./app.py
