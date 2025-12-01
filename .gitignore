@@ -5,3 +5,4 @@ title.basics.tsv
 title.basics.tsv.gz
 imdb_data_to_sql.py
 query_lyrics.py
+query_artist.py
