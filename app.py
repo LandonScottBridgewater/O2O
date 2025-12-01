@@ -12,164 +12,178 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 import yaml
 from utils.paths import get_project
-
+import os
 
 with open(get_project("O2O") / "config.yaml", 'r') as f:
     config = yaml.safe_load(f)
- 
-class DataHandler:
+
+
+class MediaDataHandler:
+    """
+    Manages how the media files and data are stored.
+    """
     def __init__(self, project_path):
-        project_path = Path(project_path)
-        self.data = project_path / "data"
+        self.project_path = Path(project_path)
+        self.data = self.project_path / "data"
         self.data.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(project_path / "data.db")
+
+        self.conn = sqlite3.connect(self.project_path / "data.db", check_same_thread=False)
         self.cur = self.conn.cursor()
-        self.cur.execute("""
-            CREATE TABLE IF NOT EXISTS files (
+
+        self.cur.executescript("""
+            CREATE TABLE IF NOT EXISTS playlists (
                 id TEXT PRIMARY KEY,
-                metadata JSON
-            )
+                title TEXT NOT NULL UNIQUE,
+                thumbnail_file_name TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS playlist_media (
+                row_id TEXT PRIMARY KEY,
+                file_name TEXT NOT NULL,
+                title TEXT,
+                author TEXT,
+                playlist_id TEXT,
+                other_metadata JSON,
+                FOREIGN KEY (playlist_id)
+                    REFERENCES playlists (id)
+                    ON DELETE SET NULL
+                    ON UPDATE CASCADE
+            );
         """)
         self.conn.commit()
 
+        if not self.search("playlists", "title", "All Media"):
+            self.create_playlist("All Media")
+
     def __del__(self):
-        if hasattr(self, "conn"):
-            self.conn.close()
+        self.conn.close()
 
-    def search(self, id):
-        row = self.cur.execute("SELECT metadata FROM files WHERE id = ?", (id,)).fetchone()
-        return json.loads(row[0]) if row else None
+    def search(self, table, column, value):
+        allowed_tables = {"playlist_media", "playlists"}
+        allowed_columns = {"row_id", "file_name", "title", "author", "playlist_id", "other_metadata", "id", "thumbnail_file_name"}
 
-    def generate_id(self):
+        if column not in allowed_columns:
+            raise ValueError(f"Invalid column: {column}")
+        if table not in allowed_tables:
+            raise ValueError(f"Invalid table: {table}")
+
+        query = f"SELECT * FROM {table} WHERE {column} LIKE ?"
+        self.cur.execute(query, (f"%{value}%",))
+        rows = self.cur.fetchall()
+
+        columns = [desc[0] for desc in self.cur.description]
+        return [dict(zip(columns, row)) for row in rows]
+
+    def search_all(self, value):
+        tables = {"playlists", "playlist_media"}
+        columns = {
+            "playlist_media": ["row_id", "file_name", "title", "author", "playlist_id"],
+            "playlists": ["id", "title", "thumbnail_file_name"]
+        }
+
+        results = {"playlists": [], "playlist_media": []}
+        seen_ids = {"playlist_media": set(), "playlists": set()}
+
+        for table in tables:
+            for column in columns[table]:
+                for item in self.search(table, column, value):
+                    key = "row_id" if table == "playlist_media" else "id"
+                    if item[key] not in seen_ids[table]:
+                        results[table].append(item)
+                        seen_ids[table].add(item[key])
+        return results
+
+    def upload_media(self, filepath, title='', author='', other_metadata=None):
+        other_metadata = {} if not other_metadata else other_metadata
+        row_id = str(uuid4())
+        file_name = f"{str(uuid4())}{Path(filepath).suffix}"
+        dest = self.data / file_name
+        shutil.copy2(filepath, dest)
+
+        self.cur.execute("""
+            INSERT INTO playlist_media (
+                row_id, file_name, title, author, playlist_id, other_metadata
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            row_id,
+            file_name,
+            title,
+            author,
+            self.search("playlists", "title", "All Media")[0]["id"],
+            json.dumps(other_metadata)
+        ))
+
+        self.conn.commit()
+        return row_id
+
+    def move_upload_media(self, filepath, title='', author='', other_metadata=None):
+        row_id = self.upload_media(filepath, title=title, author=author, other_metadata=other_metadata)
+        os.remove(filepath)
+        return row_id
+
+    def add_media_to_playlist(self, playlist_id, row_id):
+        data = self.search("playlist_media", "row_id", row_id)[0]
+        new_row_id = str(uuid4())
+
+        self.cur.execute("""
+            INSERT INTO playlist_media (
+                row_id, file_name, title, author, playlist_id, other_metadata
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            new_row_id,
+            data['file_name'],
+            data['title'],
+            data['author'],
+            playlist_id,
+            data['other_metadata']
+        ))
+        self.conn.commit()
+        return new_row_id
+
+    def create_playlist(self, title="Untitled Playlist", thumbnail_file_name="defaultPlaylistThumbnail.jpg"):
         id = str(uuid4())
-        if self.search(id):
-            return self.generate_id()
-        return id
 
-    def add_file(self, metadata, filepath=None):
-        '''
-        Copies file from file path to new file path in data structure of DataHandler.
-        '''
-        if "filepath" not in metadata or not metadata["filepath"] or not filepath:
-            raise KeyError("Metadata must include a valid 'filepath'.")
+        def get_unique_title(title):
+            if self.search("playlists", "title", title):
+                title = f"{title} (1)"
+                return get_unique_title(title)
+            return title
 
-        id = self.generate_id()
-        original_path = Path(filepath or metadata["filepath"])
-        new_file = self.data / f"{id}{original_path.suffix}"
-        shutil.copy(original_path, new_file)
-        metadata["filepath"] = str(new_file)
-        metadata["id"] = id
-
-        self.cur.execute(
-            "REPLACE INTO files (id, metadata) VALUES (?, ?)",
-            (id, json.dumps(metadata))
-        )
+        self.cur.execute("""
+            INSERT INTO playlists (id, title, thumbnail_file_name)
+            VALUES (?, ?, ?)
+        """, (id, get_unique_title(title), thumbnail_file_name))
         self.conn.commit()
         return id
 
-    def move_file(self, metadata, filepath=None):
-        '''
-        Moves file from file path to new file path in data structure of DataHandler.
-        '''
-        original_path = Path(filepath or metadata["filepath"])
-        if not original_path.exists():
-            alt_path = original_path.with_suffix(".mp3")
-            if alt_path.exists():
-                original_path = alt_path
-            else:
-                print(f"⚠️ Skipping missing file: {metadata['filepath']}")
-                return
-            
-        id = metadata.get("id") or self.generate_id()
+    def get_all_media(self):
+        self.cur.execute("SELECT * FROM playlist_media")
+        rows = self.cur.fetchall()
+        columns = [desc[0] for desc in self.cur.description]
+        return [dict(zip(columns, row)) for row in rows]
 
-        new_file = self.data / f"{uuid4()}{original_path.suffix}"
+    def get_all_playlists(self):
+        self.cur.execute("SELECT * FROM playlists")
+        rows = self.cur.fetchall()
+        columns = [desc[0] for desc in self.cur.description]
+        return [dict(zip(columns, row)) for row in rows]
 
-        try:
-            shutil.move(str(original_path), str(new_file))
-        except OSError:
-            # cross-device move — fall back to copy+unlink
-            shutil.copy2(str(original_path), str(new_file))
-            original_path.unlink(missing_ok=True)
+    # --- Added missing methods ---
+    def list_matching_pairs(self, column, value):
+        """Returns matching media rows by a specific column."""
+        return self.search("playlist_media", column, value)
 
-        metadata["filepath"] = str(new_file)
-
-        self.cur.execute(
-            "REPLACE INTO files (id, metadata) VALUES (?, ?)",
-            (id, json.dumps(metadata))
-        )
-        self.conn.commit()
-        return "File transferred!"
+    def move_file(self, result):
+        """Move downloaded file into data storage."""
+        filepath = Path(result['filepath'])
+        return self.move_upload_media(filepath, title=result.get('title', ''), author=result.get('artist', ''), other_metadata=result)
 
 
-    def delete_file(self, id):
-        metadata = self.search(id)
-        if not metadata:
-            return
-
-        file_path = Path(metadata["filepath"])
-        if file_path.exists():
-            file_path.unlink()
-
-        self.cur.execute("DELETE FROM files WHERE id = ?", (id,))
-        self.conn.commit()
-        return "File Deleted."
-    
-    def delete_files(self, ids):
-        for id in ids:
-            self.delete_file(id)
-
-    def list_matching_pairs(self, key, value):
-        query = f"SELECT id, metadata FROM files WHERE json_extract(metadata, '$.{key}') = ?"
-        rows = self.cur.execute(query, (value,)).fetchall()
-        return [(row[0], json.loads(row[1])) for row in rows]
-
-    def list_matching_keys(self, key: str):
-        query = f"SELECT id, metadata FROM files WHERE json_extract(metadata, '$.{key}') IS NOT NULL"
-        rows = self.cur.execute(query).fetchall()
-        return [(row[0], json.loads(row[1])) for row in rows]
-
-    def list_matching_values(self, value: str):
-        query = "SELECT id, metadata FROM files WHERE metadata LIKE ?"
-        rows = self.cur.execute(query, (f"%{value}%",)).fetchall()
-        return [(row[0], json.loads(row[1])) for row in rows]
-
-    def list_all_files(self):
-        rows = self.cur.execute("SELECT id, metadata FROM files").fetchall()
-        return [(row[0], json.loads(row[1])) for row in rows]
-
-    def export_metadata_to_json(self):
-        raw_data = self.list_all_files()
-        processed_data = {}
-        for song in raw_data:
-            processed_data[song[0]] = song[1]
-
-        with open(self.data / "metadata_info.json", "w") as f:
-            json.dump(processed_data,f,indent=4)
-
-
-    def update_metadata(self, id, new_metadata: dict):
-        existing = self.search(id)
-        if not existing:
-            raise KeyError(f"No file found for id: {id}")
-
-        existing.update(new_metadata)
-        self.cur.execute(
-            "REPLACE INTO files (id, metadata) VALUES (?, ?)",
-            (id, json.dumps(existing))
-        )
-        self.conn.commit()
-        return existing
-    
-    def add_metadata(self, id, new_data):
-        metadata = self.search(id) or {}
-        metadata.update(new_data)
-        self.update_metadata(id, metadata)
-
+# -----------------------
 class QueryTool:
     def __init__(self, data_handler, temp_dir=None):
         self.data_handler = data_handler
         os_name = platform.system()
-
         if os_name == "Linux":
             self.media_folder = Path(f"/dev/shm/{uuid4()}")
         else:
@@ -177,23 +191,14 @@ class QueryTool:
                 self.media_folder = Path(temp_dir) / str(uuid4())
             else:
                 raise ValueError("Non-Linux OS detected. You must provide a temp_dir for media downloads.")
-
         self.media_folder.mkdir(parents=True, exist_ok=True)
 
     def download_result(self, result, skip_existing_result=True):
-        ''''
-        skip_existing_result can be passed in user input or in the result data as a boolean under the key 'skip_existing_result'.
-        
-        Result data parameters will override function parameters.
-        '''
-
-        existing = self.data_handler.list_matching_pairs("link", result["link"])
-
-        if result['skip_existing_result']:
-            skip_existing_result = result['skip_existing_result']
+        skip_existing_result = result.get('skip_existing_result', skip_existing_result)
+        existing = self.data_handler.list_matching_pairs("other_metadata", json.dumps({"link": result.get("link")}))
 
         if existing and skip_existing_result:
-            print(f"Skipping result. (already exists): {result['link']}")
+            print(f"Skipping result (already exists): {result['link']}")
             return
 
         if result["platform"] == "youtube":
@@ -204,81 +209,52 @@ class QueryTool:
         result["filepath"] = str(filepath)
         result["date_extracted"] = date.today().isoformat()
 
-        self.data_handler.move_file(result)
+        self.data_handler.move_upload_media(
+            filepath,
+            title=result.get("title", ""),
+            author=result.get("artist", ""),
+            other_metadata=result
+        )
 
-        return f"Downloaded: {result}"
-    
-    def download_results(self,results, skip_existing_results=True):
+        print(f"Downloaded: {result['title']}")
+
+    def download_results(self, results, skip_existing_results=True):
         for result in results:
-            self.download_result(result,skip_existing_results)
+            self.download_result(result, skip_existing_results)
         return "Downloaded Results!"
-    
+
     def review_results(self, results):
-        print(f"\nFound {len(results)} candidate songs:")
         approved = []
-
         for i, song in enumerate(results, 1):
-            print(f"\n[{i}/{len(results)}]")
-            print(f"Title: {song.get('title')}")
-            print(f"Artist: {song.get('artist')}")
-            print(f"Link: {song.get('link')}")
-            print(f"Platform: {song.get('platform')}")
-            choice = input("Approve (y), skip (n), or edit (e)? [y/n/e]: ").strip().lower()
-
+            print(f"[{i}/{len(results)}] {song.get('title')} by {song.get('artist')}")
+            choice = input("Approve (y), skip (n), edit (e)? ").strip().lower()
             if choice == "y":
                 approved.append(song)
             elif choice == "e":
                 song["title"] = input(f"New title [{song['title']}]: ") or song["title"]
                 song["artist"] = input(f"New artist [{song['artist']}]: ") or song["artist"]
                 approved.append(song)
-            else:
-                print("Skipped.")
-
         return approved
-    
-    def compare_results(self):
-        pass
 
-    def query_artist(self, 
-                     artist_name, 
-                     st_model, 
-                     manual_review=True, 
-                     max_results=400, 
-                     minimum_duration_seconds=60,
-                     maximum_duration_seconds=390,
+    def query_artist(self, artist_name, st_model, manual_review=True, max_results=400,
+                     minimum_duration_seconds=60, maximum_duration_seconds=390,
                      filtered_substrings=["beat", "slowed", "reverb", "free"]):
-
         if manual_review:
-            results = self.review_results(query_artist(self, 
-                     artist_name, 
-                     st_model,
-                     max_results=max_results, 
-                     minimum_duration_seconds=minimum_duration_seconds,
-                     maximum_duration_seconds=maximum_duration_seconds,
-                     filtered_substrings=filtered_substrings))
+            results = self.review_results(query_artist(self, artist_name, st_model, max_results,
+                                                       minimum_duration_seconds, maximum_duration_seconds,
+                                                       filtered_substrings))
         else:
-            results = query_artist(self, 
-                     artist_name, 
-                     st_model,
-                     max_results=max_results, 
-                     minimum_duration_seconds=minimum_duration_seconds,
-                     maximum_duration_seconds=maximum_duration_seconds,
-                     filtered_substrings=filtered_substrings)
-            
+            results = query_artist(self, artist_name, st_model, max_results,
+                                   minimum_duration_seconds, maximum_duration_seconds,
+                                   filtered_substrings)
         return results
 
-    def query_for_single_ugc(self, st_model, query):
-        pass
 
-    def query_movie(self,query):
-        pass
-
+# -----------------------
 class YouTubeAccount:
     def __init__(self):
         self.SCOPES = ["https://www.googleapis.com/auth/youtube.readonly"]
-
         oauth = config['youtube_data_api_v3']['oauth']
-
         client_config = {
             "installed": {
                 "client_id": oauth['id'],
@@ -290,24 +266,15 @@ class YouTubeAccount:
         }
         self.flow = InstalledAppFlow.from_client_config(client_config, self.SCOPES)
         self.credentials = self.flow.run_local_server(port=0, open_browser=True)
-
         self.youtube = build("youtube", "v3", credentials=self.credentials)
 
     def get_playlists(self):
-        # in the future, implement pagination for support past
-        # the max. of 50 playlists for a user
         playlists = []
-
-        request = self.youtube.playlists().list(
-            part="id,snippet,contentDetails",
-            mine=True,
-            maxResults=50
-        )
+        request = self.youtube.playlists().list(part="id,snippet,contentDetails", mine=True, maxResults=50)
         response = request.execute()["items"]
-        
         for playlist in response:
             playlists.append({
-                "uuid": uuid4(),
+                "uuid": str(uuid4()),
                 "kind": playlist["kind"],
                 "title": playlist["snippet"]["title"],
                 "youtubeId": playlist["id"],
@@ -316,26 +283,11 @@ class YouTubeAccount:
                 "channelId": playlist["snippet"]["channelId"],
                 "description": playlist["snippet"]["description"]
             })
-
-
         return playlists
 
     def get_playlist_videos(self, playlistJson):
-        """
-        Fetch all videos from a given YouTube playlist. 
-
-        Minimal metadata gathered for basic usage.
-
-        Args:
-            playlist_id (str): The YouTube playlist ID.
-
-        Returns:
-            List[dict]: A list of videos with metadata (title, videoId, link, publishedAt, etc.).
-        """
-
         videos = []
         next_page_token = None
-
         while True:
             request = self.youtube.playlistItems().list(
                 part="snippet,contentDetails",
@@ -347,7 +299,6 @@ class YouTubeAccount:
 
             for item in response.get("items", []):
                 snippet = item["snippet"]
-                content_details = item["contentDetails"]
                 videos.append({
                     "uuid": str(uuid4()),
                     "videoId": snippet["resourceId"]["videoId"],
@@ -362,76 +313,62 @@ class YouTubeAccount:
 
         return videos
 
-with open(get_project("O2O") / "data_m.json","w") as f:
-    json.dump(YouTubeAccount().get_playlists(),f,indent=4)
-
-if __name__ == '__main__':
+if __name__ == "__main__":
 
     def ui():
-
         inputs = {
-            "path":input("type O2O-dedicated path:").strip(),
-            "use":""
-            }
+            "path": input("Type O2O-dedicated path: ").strip(),
+            "use": ""
+        }
+
         print("1 = Query discography from artist query")
-        print("2 = download discography from artist query")
+        print("2 = Download discography from artist query")
         print("3 = Download a YouTube channel's playlists' videos")
-        print("4 = Download a YouTube video")
+        print("4 = Download a YouTube video to export")
 
-        inputs["use"] = int(input("type the option to preform the associated function:").strip())
+        inputs["use"] = int(input("Type the option to perform the associated function: ").strip())
 
-        data_handler = DataHandler(inputs['path'])
-        print(data_handler.list_all_files())
+        data_handler = MediaDataHandler(inputs['path'])
+        print(data_handler.get_all_media())
 
         qt = QueryTool(data_handler)
         st_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-        if inputs['use'] == 1: # query discography from artist query
-            qt.query_artist(artist_name=input("type in the artist name:").strip(),
-                            st_model=st_model,
-                            manual_review=input("Type 'Y' to manually review each song, or 'N' to not:").strip() == 'Y',
-                            max_results=int(input('type in the maximum amount of songs to query:').strip()),
-                            minimum_duration_seconds=int(input('type in the minimum duration in seconds to query:').strip()),
-                            maximum_duration_seconds=int(input('type in the maximum duration in seconds to query:').strip()))
+        if inputs['use'] == 1:
+            qt.query_artist(
+                artist_name=input("Type in the artist name: ").strip(),
+                st_model=st_model,
+                manual_review=input("Type 'Y' to manually review each song, or 'N' to not: ").strip().upper() == 'Y',
+                max_results=int(input("Type in the maximum amount of songs to query: ").strip()),
+                minimum_duration_seconds=int(input("Type in the minimum duration in seconds to query: ").strip()),
+                maximum_duration_seconds=int(input("Type in the maximum duration in seconds to query: ").strip())
+            )
 
-        elif inputs['use'] == 2: # download discography from artist query
-            results = qt.query_artist(inputs["artist"], 
-                                    st_model, 
-                                    manual_review=inputs["manual_review"])
+        elif inputs['use'] == 2:
+            artist_name = input("Type in the artist name: ").strip()
+            manual_review = input("Type 'Y' to manually review each song, or 'N' to not: ").strip().upper() == 'Y'
+            results = qt.query_artist(artist_name, st_model, manual_review=manual_review)
             qt.download_results(results)
-        elif inputs["use"] == 3:
-            print("This option 3 downloads the videos of all your YouTube channel's playlists.")
 
-            to_proceed = input("type 'Y' to proceed, type 'N' to exit:").strip() == 'Y'
-            have_prints = input("type 'Y' to have console print the processes being ran, or type 'N' for it to not:").strip() == 'Y' 
-
-            if to_proceed:
-
+        elif inputs['use'] == 3:
+            proceed = input("Type 'Y' to proceed, 'N' to exit: ").strip().upper() == 'Y'
+            if proceed:
                 yt = YouTubeAccount()
-
-                print('Querying playlists...') if have_prints else None
                 playlists = yt.get_playlists()
-
-                videos = []
-                for playlist in playlists:
-                    videos.append(yt.get_playlist_videos(playlist))
-                    
-                print('Queried playlists!') if have_prints else None
+                videos = [v for playlist in playlists for v in yt.get_playlist_videos(playlist)]
                 for video in videos:
-                    print(f'Processing {video} ...')
-                    video_fp = download_youtube(url=video["link"],
-                                        output_parent_dir=data_handler.project_path,
-                                        file_name=video["title"]
-                                        )
-                    data_handler.move_file(video,video_fp)
-                    print('Processed!')
+                    print(f"Processing: {video['title']}")
+                    video_fp = download_youtube(video['link'], data_handler.project_path, video['title'])
+                    data_handler.move_upload_media(video_fp, title=video['title'])
+                    print("Processed!")
             else:
-                ui()
-        elif inputs["use"] == 4:
-            link = input("Enter the video link:").strip()
-            print("Leave blank to default to Downloads folder.")
-            file_directory_to_upload = input("Enter the video file directory to add to:").strip()
-            print("Leave blank for automatic name.")
-            file_name = input("Enter what the file should be named:")
+                return ui()
 
-            print(download_youtube(link,file_directory_to_upload,file_name))
+        elif inputs['use'] == 4:
+            link = input("Enter the video link: ").strip()
+            output_dir = input("Enter the directory to save the video (leave blank for default): ").strip() or None
+            file_name = input("Enter what the file should be named (leave blank for default): ").strip() or None
+            video_fp = download_youtube(link, output_dir, file_name)
+            data_handler.move_upload_media(video_fp, title=file_name or Path(video_fp).stem)
+
+    ui()
