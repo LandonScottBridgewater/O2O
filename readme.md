@@ -71,7 +71,7 @@ Most heuristics rely on official sources, but this approach works for even niche
 
 ### `app.py`
 
-### `class DataHandler`
+### `class MediaDataHandler`
 
 Manages how the media files and data are stored.
 
