@@ -6,8 +6,6 @@ import isodate
 from unidecode import unidecode
 import os
 
-data_folder = f"{os.path.expanduser('~')}/O2O"
-
 def query_filter(st_model, query, title, channel, duration_seconds, minimum_duration_seconds, maximum_duration_seconds,filtered_substrings):
 
     filtered_substrings = [i.lower() for i in filtered_substrings]
